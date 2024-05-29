@@ -83,6 +83,8 @@
 
 #include "telemetry/mavlink.h"
 #include "telemetry/telemetry.h"
+#include "telemetry/mavlink_msg_wind.h"
+#include "telemetry/mavlink_msg_esc_telemetry_1_to_4.h"
 
 #include "blackbox/blackbox_io.h"
 
@@ -903,6 +905,77 @@ void mavlinkSendBatteryTemperatureStatusText(void)
 
 }
 
+
+static float wind_direction=0;
+static float wind_speed=0;
+static int8_t axis=0;
+void mavlinkSendWindEstimator(void)
+{
+    float xWindSpeed = -1;
+    uint16_t windHeading; // centidegrees
+    bool valid = false;
+    xWindSpeed = getEstimatedWindSpeed(axis) / 100;     
+           
+    if (ARMING_FLAG(ARMED)){
+        valid = isEstimatedWindSpeedValid(); 
+        wind_speed =  getEstimatedHorizontalWindSpeed(&windHeading) / 100 ;              
+        wind_direction = osdGetHeadingAngle( CENTIDEGREES_TO_DEGREES((int)windHeading) - DECIDEGREES_TO_DEGREES(attitude.values.yaw) /*+ 22*/);        
+
+    }else{//Rotate the arrow when not Armed to test message is working
+        wind_direction+=3;
+        wind_speed+=0.2;        
+    }
+       
+    if (wind_direction>360){
+        wind_direction=5;
+        wind_speed=1;        
+    }
+        
+    mavlink_msg_wind_pack(mavSystemId, mavComponentId, &mavSendMsg,        
+    wind_direction,
+    (valid) ? wind_speed:-wind_speed //negative speed if the value is not valid
+    ,xWindSpeed);
+    mavlinkSendMessage();                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+}
+
+
+void mavlinkSendTempSensors(void)
+{
+    uint8_t temps[4] = {-11, TEMPERATURE_INVALID_VALUE, TEMPERATURE_INVALID_VALUE, TEMPERATURE_INVALID_VALUE};
+    uint8_t esc_index=0;
+    bool valid_temp;
+    int16_t temperature;    
+    for (uint8_t index = 0; index < MAX_TEMP_SENSORS; ++index) {
+        valid_temp = getSensorTemperature(index, &temperature);        
+        if (valid_temp&&esc_index<4){//can fit up to 4 temp sensors in this message
+            temps[esc_index]=temperature/10;
+            esc_index++;
+        }
+    }
+    
+    if (esc_index>0){
+        mavlink_msg_esc_telemetry_1_to_4_pack(mavSystemId, mavComponentId, &mavSendMsg,       
+            temps, 
+            (uint16_t[]){0, 0, 0, 0},
+            (uint16_t[]){0, 0, 0, 0},
+            (uint16_t[]){0, 0, 0, 0},
+            (uint16_t[]){0, 0, 0, 0},       
+            (uint16_t[]){0, 0, 0, 0}
+        );   
+        mavlinkSendMessage();
+    }
+}
+
+
+void mavlinkSendRcLinkStatus(void)
+{
+    mavlink_msg_radio_status_pack(mavSystemId, mavComponentId, &mavSendMsg,
+    (uint8_t)rxLinkStatistics.uplinkRSSI,(uint8_t)rxLinkStatistics.uplinkLQ,0,
+        rxLinkStatistics.uplinkSNR,(uint8_t)rxLinkStatistics.uplinkTXPower,0, 0);       
+
+    mavlinkSendMessage();
+}
+
 void processMAVLinkTelemetry(timeUs_t currentTimeUs)
 {
     // is executed @ TELEMETRY_MAVLINK_MAXRATE rate
@@ -930,6 +1003,9 @@ void processMAVLinkTelemetry(timeUs_t currentTimeUs)
 
     if (mavlinkStreamTrigger(MAV_DATA_STREAM_EXTRA3)) {
         mavlinkSendBatteryTemperatureStatusText();
+        mavlinkSendWindEstimator();   
+        mavlinkSendTempSensors();
+        mavlinkSendRcLinkStatus();    
     }
 
 }
